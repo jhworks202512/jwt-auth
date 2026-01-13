@@ -1,9 +1,8 @@
-from fastapi import FastAPI, Request, HTTPException, Depends
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
-import os
+import bcrypt
 
 app = FastAPI()
 
@@ -51,9 +50,11 @@ def init_db():
     
     # 예시 사용자 추가 (이미 존재하면 무시)
     try:
-        c.execute("INSERT INTO users (email, password) VALUES (?, ?)", ("test@example.com", "password123"))
+        # bcrypt로 비밀번호 해싱
+        hashed_password = bcrypt.hashpw("password123".encode('utf-8'), bcrypt.gensalt())
+        c.execute("INSERT INTO users (email, password) VALUES (?, ?)", ("test@example.com", hashed_password.decode('utf-8')))
         conn.commit()
-        print("Test user created.")
+        print("Test user created with hashed password.")
     except sqlite3.IntegrityError:
         print("Test user already exists.")
     
@@ -69,10 +70,14 @@ async def signup(data: dict):
     password = data.get("password")
     if not email or not password:
         raise HTTPException(status_code=400, detail="Email and password required")
+    
+    # bcrypt로 비밀번호 해싱
+    hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+    
     conn = get_db()
     c = conn.cursor()
     try:
-        c.execute("INSERT INTO users (email, password) VALUES (?, ?)", (email, password))
+        c.execute("INSERT INTO users (email, password) VALUES (?, ?)", (email, hashed_password.decode('utf-8')))
         conn.commit()
         conn.close()
         return {"success": True, "message": "Signup successful"}
@@ -89,10 +94,11 @@ async def login(data: dict):
         raise HTTPException(status_code=400, detail="Email and password required")
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE email=? AND password=?", (email, password))
+    c.execute("SELECT * FROM users WHERE email=?", (email,))
     user = c.fetchone()
     conn.close()
-    if user:
+    
+    if user and bcrypt.checkpw(password.encode('utf-8'), user["password"].encode('utf-8')):
         return {"success": True, "message": "Login successful"}
     else:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -112,10 +118,10 @@ async def add_note(data: dict):
     
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE email=? AND password=?", (email, password))
+    c.execute("SELECT * FROM users WHERE email=?", (email,))
     user = c.fetchone()
     
-    if not user:
+    if not user or not bcrypt.checkpw(password.encode('utf-8'), user["password"].encode('utf-8')):
         conn.close()
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
@@ -131,10 +137,10 @@ async def add_note(data: dict):
 async def get_notes(email: str, password: str):
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE email=? AND password=?", (email, password))
+    c.execute("SELECT * FROM users WHERE email=?", (email,))
     user = c.fetchone()
     
-    if not user:
+    if not user or not bcrypt.checkpw(password.encode('utf-8'), user["password"].encode('utf-8')):
         conn.close()
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
@@ -161,10 +167,10 @@ async def update_note(note_id: int, data: dict):
     
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE email=? AND password=?", (email, password))
+    c.execute("SELECT * FROM users WHERE email=?", (email,))
     user = c.fetchone()
     
-    if not user:
+    if not user or not bcrypt.checkpw(password.encode('utf-8'), user["password"].encode('utf-8')):
         conn.close()
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
@@ -186,10 +192,10 @@ async def update_note(note_id: int, data: dict):
 async def delete_note(note_id: int, email: str, password: str):
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE email=? AND password=?", (email, password))
+    c.execute("SELECT * FROM users WHERE email=?", (email,))
     user = c.fetchone()
     
-    if not user:
+    if not user or not bcrypt.checkpw(password.encode('utf-8'), user["password"].encode('utf-8')):
         conn.close()
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
