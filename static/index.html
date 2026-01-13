@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>노트 앱</title>
+    <style>
+        body { 
+            font-family: sans-serif; 
+            margin: 2em; 
+            background-color: #f5f5f5;
+        }
+        .container { 
+            max-width: 600px; 
+            margin: auto; 
+            background: white;
+            padding: 2em;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        input, button, textarea { 
+            width: 100%; 
+            margin: 0.5em 0; 
+            padding: 0.8em; 
+            box-sizing: border-box;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button.secondary {
+            background-color: #6c757d;
+        }
+        button.secondary:hover {
+            background-color: #545b62;
+        }
+        button.danger {
+            background-color: #dc3545;
+        }
+        button.danger:hover {
+            background-color: #c82333;
+        }
+        button.warning {
+            background-color: #ffc107;
+            color: #000;
+        }
+        button.warning:hover {
+            background-color: #e0a800;
+        }
+        button.small {
+            width: auto;
+            padding: 0.5em 1em;
+            margin: 0.2em;
+            font-size: 0.9em;
+        }
+        .result { 
+            margin-top: 1em; 
+            padding: 1em;
+            border-radius: 4px;
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error { 
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .hidden {
+            display: none;
+        }
+        .note {
+            border: 1px solid #ddd;
+            padding: 1em;
+            margin: 0.5em 0;
+            border-radius: 4px;
+            background-color: #fafafa;
+            position: relative;
+        }
+        .note h3 {
+            margin: 0 0 0.5em 0;
+            color: #333;
+        }
+        .note p {
+            margin: 0 0 0.5em 0;
+            color: #666;
+            white-space: pre-wrap;
+        }
+        .note small {
+            color: #999;
+            display: block;
+            margin-bottom: 0.5em;
+        }
+        .note-actions {
+            display: flex;
+            gap: 0.5em;
+        }
+        .note-edit-form {
+            margin-top: 1em;
+            padding-top: 1em;
+            border-top: 1px solid #ddd;
+        }
+        h2 {
+            margin-top: 0;
+            color: #333;
+        }
+        .section {
+            margin-bottom: 2em;
+        }
+        #loginStatus {
+            text-align: right;
+            margin-bottom: 1em;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="loginStatus"></div>
+        
+        <!-- 로그인/회원가입 화면 -->
+        <div id="authSection">
+            <h2>로그인 / 회원가입</h2>
+            <label>
+                이메일:
+                <input type="email" id="authEmail" placeholder="이메일을 입력하세요" />
+            </label></label>
+            <label>
+                패스워드:
+                <input type="password" id="authPassword" placeholder="패스워드를 입력하세요" />
+            </label>
+            <button onclick="login()">로그인</button>
+            <button class="secondary" onclick="signup()">회원가입</button>
+            <div class="result hidden" id="authResult"></div>
+        </div>
+
+        <!-- 메인 화면 (로그인 후) -->
+        <div id="mainSection" class="hidden">
+            <h2>내 노트</h2>
+            
+            <div class="section">
+                <h3>새 노트 추가</h3>
+                <input type="text" id="noteTitle" placeholder="제목" />
+                <textarea id="noteContent" rows="4" placeholder="내용"></textarea>
+                <button onclick="addNote()">노트 추가</button>
+            </div>
+
+            <div class="section">
+                <h3>내 노트 목록</h3>
+                <button class="secondary" onclick="loadNotes()">새로고침</button>
+                <div id="notesList"></div>
+            </div>
+
+            <button class="danger" onclick="logout()">로그아웃</button>
+            <div class="result hidden" id="mainResult"></div>
+        </div>
+    </div>
+
+    <script>
+        let editingNoteId = null;
+
+        // 인증 정보 관리
+        function saveCredentials(email, password) {
+            localStorage.setItem('email', email);
+            localStorage.setItem('password', password);
+        }
+
+        function getCredentials() {
+            return {
+                email: localStorage.getItem('email') || '',
+                password: localStorage.getItem('password') || ''
+            };
+        }
+
+        function clearCredentials() {
+            localStorage.removeItem('email');
+            localStorage.removeItem('password');
+        }
+
+        function isLoggedIn() {
+            const creds = getCredentials();
+            return creds.email && creds.password;
+        }
+
+        // 자동 로그아웃 처리
+        function handleUnauthorized() {
+            showMessage('authResult', '인증 실패. 다시 로그인해주세요.', true);
+            logout();
+        }
+
+        // UI 업데이트
+        function updateUI() {
+            if (isLoggedIn()) {
+                document.getElementById('authSection').classList.add('hidden');
+                document.getElementById('mainSection').classList.remove('hidden');
+                const creds = getCredentials();
+                document.getElementById('loginStatus').textContent = `로그인: ${creds.email}`;
+                loadNotes();
+            } else {
+                document.getElementById('authSection').classList.remove('hidden');
+                document.getElementById('mainSection').classList.add('hidden');
+                document.getElementById('loginStatus').textContent = '';
+                const creds = getCredentials();
+                document.getElementById('authEmail').value = creds.email;
+                document.getElementById('authPassword').value = creds.password;
+            }
+        }
+
+        // 메시지 표시
+        function showMessage(elementId, message, isError = false) {
+            const element = document.getElementById(elementId);
+            element.textContent = message;
+            element.className = isError ? 'result error' : 'result';
+            element.classList.remove('hidden');
+            setTimeout(() => {
+                element.classList.add('hidden');
+            }, 5000);
+        }
+
+        // 회원가입
+        async function signup() {
+            const email = document.getElementById('authEmail').value;
+            const password = document.getElementById('authPassword').value;
+            
+            if (!email || !password) {
+                showMessage('authResult', '이메일과 패스워드를 입력하세요.', true);
+                return;
+            }
+
+            try {
+                const res = await fetch('/signup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                const data = await res.json();
+                
+                if (res.ok) {
+                    showMessage('authResult', '회원가입 성공! 로그인해주세요.');
+                } else {
+                    showMessage('authResult', data.detail || '회원가입 실패', true);
+                }
+            } catch (e) {
+                showMessage('authResult', '네트워크 오류', true);
+            }
+        }
+
+        // 로그인
+        async function login() {
+            const email = document.getElementById('authEmail').value;
+            const password = document.getElementById('authPassword').value;
+            
+            if (!email || !password) {
+                showMessage('authResult', '이메일과 패스워드를 입력하세요.', true);
+                return;
+            }
+
+            try {
+                const res = await fetch('/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                const data = await res.json();
+                
+                if (res.ok) {
+                    saveCredentials(email, password);
+                    showMessage('authResult', '로그인 성공!');
+                    updateUI();
+                } else {
+                    showMessage('authResult', data.detail || '로그인 실패', true);
+                }
+            } catch (e) {
+                showMessage('authResult', '네트워크 오류', true);
+            }
+        }
+
+        // 로그아웃
+        function logout() {
+            clearCredentials();
+            document.getElementById('notesList').innerHTML = '';
+            editingNoteId = null;
+            updateUI();
+        }
+
+        // 노트 추가
+        async function addNote() {
+            const creds = getCredentials();
+            const title = document.getElementById('noteTitle').value;
+            const content = document.getElementById('noteContent').value;
+            
+            if (!title || !content) {
+                showMessage('mainResult', '제목과 내용을 입력하세요.', true);
+                return;
+            }
+
+            try {
+                const res = await fetch('/notes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        email: creds.email, 
+                        password: creds.password, 
+                        title, 
+                        content 
+                    })
+                });
+                const data = await res.json();
+                
+                if (res.ok) {
+                    showMessage('mainResult', '노트가 추가되었습니다.');
+                    document.getElementById('noteTitle').value = '';
+                    document.getElementById('noteContent').value = '';
+                    loadNotes();
+                } else if (res.status === 401) {
+                    handleUnauthorized();
+                } else {
+                    showMessage('mainResult', data.detail || '노트 추가 실패', true);
+                }
+            } catch (e) {
+                showMessage('mainResult', '네트워크 오류', true);
+            }
+        }
+
+        // 노트 목록 조회
+        async function loadNotes() {
+            const creds = getCredentials();
+            
+            try {
+                const params = new URLSearchParams({ 
+                    email: creds.email, 
+                    password: creds.password 
+                });
+                const res = await fetch('/notes?' + params.toString());
+                const data = await res.json();
+                
+                if (res.ok) {
+                    displayNotes(data.notes);
+                } else if (res.status === 401) {
+                    handleUnauthorized();
+                } else {
+                    showMessage('mainResult', data.detail || '노트 조회 실패', true);
+                }
+            } catch (e) {
+                showMessage('mainResult', '네트워크 오류', true);
+            }
+        }
+
+        // 노트 수정 시작
+        function startEditNote(noteId, title, content) {
+            editingNoteId = noteId;
+            const noteElement = document.getElementById('note-' + noteId);
+            const editForm = `
+                <div class="note-edit-form">
+                    <input type="text" id="editTitle-${noteId}" value="${escapeHtml(title)}" />
+                    <textarea id="editContent-${noteId}" rows="4">${escapeHtml(content)}</textarea>
+                    <div class="note-actions">
+                        <button class="small" onclick="saveEditNote(${noteId})">저장</button>
+                        <button class="small secondary" onclick="cancelEditNote(${noteId})">취소</button>
+                    </div>
+                </div>
+            `;
+            noteElement.innerHTML += editForm;
+            noteElement.querySelector('.note-actions').style.display = 'none';
+        }
+
+        // 노트 수정 취소
+        function cancelEditNote(noteId) {
+            editingNoteId = null;
+            loadNotes();
+        }
+
+        // 노트 수정 저장
+        async function saveEditNote(noteId) {
+            const creds = getCredentials();
+            const title = document.getElementById('editTitle-' + noteId).value;
+            const content = document.getElementById('editContent-' + noteId).value;
+            
+            if (!title || !content) {
+                showMessage('mainResult', '제목과 내용을 입력하세요.', true);
+                return;
+            }
+
+            try {
+                const res = await fetch('/notes/' + noteId, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        email: creds.email, 
+                        password: creds.password, 
+                        title, 
+                        content 
+                    })
+                });
+                const data = await res.json();
+                
+                if (res.ok) {
+                    showMessage('mainResult', '노트가 수정되었습니다.');
+                    editingNoteId = null;
+                    loadNotes();
+                } else if (res.status === 401) {
+                    handleUnauthorized();
+                } else {
+                    showMessage('mainResult', data.detail || '노트 수정 실패', true);
+                }
+            } catch (e) {
+                showMessage('mainResult', '네트워크 오류', true);
+            }
+        }
+
+        // 노트 삭제
+        async function deleteNote(noteId) {
+            if (!confirm('정말로 이 노트를 삭제하시겠습니까?')) {
+                return;
+            }
+
+            const creds = getCredentials();
+            
+            try {
+                const params = new URLSearchParams({ 
+                    email: creds.email, 
+                    password: creds.password 
+                });
+                const res = await fetch('/notes/' + noteId + '?' + params.toString(), {
+                    method: 'DELETE'
+                });
+                const data = await res.json();
+                
+                if (res.ok) {
+                    showMessage('mainResult', '노트가 삭제되었습니다.');
+                    loadNotes();
+                } else if (res.status === 401) {
+                    handleUnauthorized();
+                } else {
+                    showMessage('mainResult', data.detail || '노트 삭제 실패', true);
+                }
+            } catch (e) {
+                showMessage('mainResult', '네트워크 오류', true);
+            }
+        }
+
+        // 노트 목록 표시
+        function displayNotes(notes) {
+            const notesListElement = document.getElementById('notesList');
+            
+            if (notes.length === 0) {
+                notesListElement.innerHTML = '<p style="color: #999; text-align: center;">노트가 없습니다.</p>';
+                return;
+            }
+
+            notesListElement.innerHTML = notes.map(note => `
+                <div class="note" id="note-${note.id}">
+                    <h3>${escapeHtml(note.title)}</h3>
+                    <p>${escapeHtml(note.content)}</p>
+                    <small>작성일: ${note.created_at}</small>
+                    <div class="note-actions">
+                        <button class="small warning" onclick="startEditNote(${note.id}, '${escapeHtml(note.title).replace(/'/g, "\\'")}', '${escapeHtml(note.content).replace(/'/g, "\\'")}')">수정</button>
+                        <button class="small danger" onclick="deleteNote(${note.id})">삭제</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // HTML 이스케이프
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // 페이지 로드 시 UI 업데이트
+        updateUI();
+    </script>
+</body>
+</html>
