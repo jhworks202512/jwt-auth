@@ -1,8 +1,11 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response, Cookie
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from typing import Optional
 import sqlite3
 import bcrypt
+import secrets
+from datetime import datetime, timedelta
 
 app = FastAPI()
 
@@ -16,6 +19,10 @@ app.add_middleware(
 )
 
 DB_PATH = "users.db"
+
+# 세션 저장소 (메모리)
+sessions = {}
+SESSION_TIMEOUT = timedelta(hours=24)
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -63,6 +70,38 @@ def init_db():
 
 init_db()
 
+# 세션 생성
+def create_session(email: str) -> str:
+    session_id = secrets.token_urlsafe(32)
+    sessions[session_id] = {
+        "email": email,
+        "created_at": datetime.now(),
+        "expires_at": datetime.now() + SESSION_TIMEOUT
+    }
+    print(f"Session created for {email}: {session_id}")
+    return session_id
+
+# 세션 검증
+def validate_session(session_id: Optional[str]) -> Optional[str]:
+    if not session_id or session_id not in sessions:
+        return None
+    
+    session = sessions[session_id]
+    
+    # 세션 만료 확인
+    if datetime.now() > session["expires_at"]:
+        del sessions[session_id]
+        print(f"Session expired and deleted: {session_id}")
+        return None
+    
+    return session["email"]
+
+# 세션 삭제
+def delete_session(session_id: str):
+    if session_id in sessions:
+        del sessions[session_id]
+        print(f"Session deleted: {session_id}")
+
 # 회원가입
 @app.post("/signup")
 async def signup(data: dict):
@@ -87,11 +126,12 @@ async def signup(data: dict):
 
 # 로그인
 @app.post("/login")
-async def login(data: dict):
+async def login(data: dict, response: Response):
     email = data.get("email")
     password = data.get("password")
     if not email or not password:
         raise HTTPException(status_code=400, detail="Email and password required")
+    
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT * FROM users WHERE email=?", (email,))
@@ -99,32 +139,51 @@ async def login(data: dict):
     conn.close()
     
     if user and bcrypt.checkpw(password.encode('utf-8'), user["password"].encode('utf-8')):
+        # 세션 생성
+        session_id = create_session(email)
+        # 쿠키에 세션 ID 저장
+        response.set_cookie(
+            key="session_id",
+            value=session_id,
+            httponly=True,
+            max_age=86400,  # 24시간
+            samesite="lax"
+        )
         return {"success": True, "message": "Login successful"}
     else:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
+# 로그아웃
+@app.post("/logout")
+async def logout(response: Response, session_id: Optional[str] = Cookie(None)):
+    if session_id:
+        delete_session(session_id)
+    response.delete_cookie(key="session_id")
+    return {"success": True, "message": "Logged out"}
+
+# 현재 사용자 정보 조회
+@app.get("/me")
+async def get_current_user(session_id: Optional[str] = Cookie(None)):
+    email = validate_session(session_id)
+    if not email:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return {"email": email}
+
 # 노트 추가
 @app.post("/notes")
-async def add_note(data: dict):
-    email = data.get("email")
-    password = data.get("password")
+async def add_note(data: dict, session_id: Optional[str] = Cookie(None)):
+    email = validate_session(session_id)
+    if not email:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
     title = data.get("title")
     content = data.get("content")
     
-    if not email or not password:
-        raise HTTPException(status_code=400, detail="Email and password required")
     if not title or not content:
         raise HTTPException(status_code=400, detail="Title and content required")
     
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE email=?", (email,))
-    user = c.fetchone()
-    
-    if not user or not bcrypt.checkpw(password.encode('utf-8'), user["password"].encode('utf-8')):
-        conn.close()
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    
     c.execute("INSERT INTO notes (user_email, title, content) VALUES (?, ?, ?)", 
               (email, title, content))
     conn.commit()
@@ -134,16 +193,13 @@ async def add_note(data: dict):
 
 # 노트 조회
 @app.get("/notes")
-async def get_notes(email: str, password: str):
+async def get_notes(session_id: Optional[str] = Cookie(None)):
+    email = validate_session(session_id)
+    if not email:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE email=?", (email,))
-    user = c.fetchone()
-    
-    if not user or not bcrypt.checkpw(password.encode('utf-8'), user["password"].encode('utf-8')):
-        conn.close()
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    
     c.execute("SELECT * FROM notes WHERE user_email=? ORDER BY created_at DESC", (email,))
     notes = c.fetchall()
     conn.close()
@@ -154,25 +210,19 @@ async def get_notes(email: str, password: str):
 
 # 노트 수정
 @app.put("/notes/{note_id}")
-async def update_note(note_id: int, data: dict):
-    email = data.get("email")
-    password = data.get("password")
+async def update_note(note_id: int, data: dict, session_id: Optional[str] = Cookie(None)):
+    email = validate_session(session_id)
+    if not email:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
     title = data.get("title")
     content = data.get("content")
     
-    if not email or not password:
-        raise HTTPException(status_code=400, detail="Email and password required")
     if not title or not content:
         raise HTTPException(status_code=400, detail="Title and content required")
     
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE email=?", (email,))
-    user = c.fetchone()
-    
-    if not user or not bcrypt.checkpw(password.encode('utf-8'), user["password"].encode('utf-8')):
-        conn.close()
-        raise HTTPException(status_code=401, detail="Invalid credentials")
     
     # 해당 노트가 현재 사용자의 것인지 확인
     c.execute("SELECT * FROM notes WHERE id=? AND user_email=?", (note_id, email))
@@ -189,15 +239,13 @@ async def update_note(note_id: int, data: dict):
 
 # 노트 삭제
 @app.delete("/notes/{note_id}")
-async def delete_note(note_id: int, email: str, password: str):
+async def delete_note(note_id: int, session_id: Optional[str] = Cookie(None)):
+    email = validate_session(session_id)
+    if not email:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE email=?", (email,))
-    user = c.fetchone()
-    
-    if not user or not bcrypt.checkpw(password.encode('utf-8'), user["password"].encode('utf-8')):
-        conn.close()
-        raise HTTPException(status_code=401, detail="Invalid credentials")
     
     # 해당 노트가 현재 사용자의 것인지 확인
     c.execute("SELECT * FROM notes WHERE id=? AND user_email=?", (note_id, email))
