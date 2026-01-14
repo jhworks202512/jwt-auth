@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>노트 앱 (세션 인증)</title>
+    <title>노트 앱 (JWT 인증)</title>
     <style>
         body { 
             font-family: sans-serif; 
@@ -162,6 +162,9 @@
     </div>
 
     <script>
+        // 로컬 스토리지에 토큰 저장/조회
+        let accessToken = localStorage.getItem('access_token');
+        let refreshToken = localStorage.getItem('refresh_token');
         let editingNoteId = null;
         let currentUserEmail = '';
 
@@ -178,14 +181,23 @@
 
         // 현재 사용자 정보 가져오기
         async function checkAuth() {
+            if (!accessToken) {
+                return false;
+            }
+
             try {
                 const res = await fetch('/me', {
-                    credentials: 'include'
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`
+                    }
                 });
                 if (res.ok) {
                     const data = await res.json();
                     currentUserEmail = data.email;
                     return true;
+                } else if (res.status === 401) {
+                    // 액세스 토큰 만료 → 리프레시 시도
+                    return await tryRefreshToken();
                 } else {
                     currentUserEmail = '';
                     return false;
@@ -194,6 +206,44 @@
                 currentUserEmail = '';
                 return false;
             }
+        }
+
+        // 토큰 리프레시 시도
+        async function tryRefreshToken() {
+            if (!refreshToken) {
+                clearTokens();
+                return false;
+            }
+
+            try {
+                const res = await fetch('/refresh', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ refresh_token: refreshToken })
+                });
+
+                if (res.ok) {
+                    const data = await res.json();
+                    accessToken = data.access_token;
+                    localStorage.setItem('access_token', accessToken);
+                    console.log('Access token refreshed');
+                    return await checkAuth();
+                } else {
+                    clearTokens();
+                    return false;
+                }
+            } catch (e) {
+                clearTokens();
+                return false;
+            }
+        }
+
+        // 토큰 초기화
+        function clearTokens() {
+            accessToken = null;
+            refreshToken = null;
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('refresh_token');
         }
 
         // UI 업데이트
@@ -215,6 +265,7 @@
         // 자동 로그아웃 처리
         function handleUnauthorized() {
             showMessage('mainResult', '세션이 만료되었습니다. 다시 로그인해주세요.', true);
+            clearTokens();
             setTimeout(() => {
                 updateUI();
             }, 2000);
@@ -234,8 +285,7 @@
                 const res = await fetch('/signup', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, password }),
-                    credentials: 'include'
+                    body: JSON.stringify({ email, password })
                 });
                 const data = await res.json();
                 
@@ -263,12 +313,17 @@
                 const res = await fetch('/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, password }),
-                    credentials: 'include'
+                    body: JSON.stringify({ email, password })
                 });
                 const data = await res.json();
                 
                 if (res.ok) {
+                    // JWT 토큰을 로컬 스토리지에 저장
+                    accessToken = data.access_token;
+                    refreshToken = data.refresh_token;
+                    localStorage.setItem('access_token', accessToken);
+                    localStorage.setItem('refresh_token', refreshToken);
+                    
                     showMessage('authResult', '로그인 성공!');
                     document.getElementById('authEmail').value = '';
                     document.getElementById('authPassword').value = '';
@@ -288,10 +343,13 @@
             try {
                 const res = await fetch('/logout', {
                     method: 'POST',
-                    credentials: 'include'
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`
+                    }
                 });
                 
-                if (res.ok) {
+                if (res.ok || res.status === 401) {
+                    clearTokens();
                     document.getElementById('notesList').innerHTML = '';
                     editingNoteId = null;
                     updateUI();
@@ -314,9 +372,11 @@
             try {
                 const res = await fetch('/notes', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ title, content }),
-                    credentials: 'include'
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: JSON.stringify({ title, content })
                 });
                 const data = await res.json();
                 
@@ -339,7 +399,9 @@
         async function loadNotes() {
             try {
                 const res = await fetch('/notes', {
-                    credentials: 'include'
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`
+                    }
                 });
                 const data = await res.json();
                 
@@ -392,9 +454,11 @@
             try {
                 const res = await fetch('/notes/' + noteId, {
                     method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ title, content }),
-                    credentials: 'include'
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: JSON.stringify({ title, content })
                 });
                 const data = await res.json();
                 
@@ -421,7 +485,9 @@
             try {
                 const res = await fetch('/notes/' + noteId, {
                     method: 'DELETE',
-                    credentials: 'include'
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`
+                    }
                 });
                 const data = await res.json();
                 
